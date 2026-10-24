@@ -5,6 +5,9 @@
 # Started by pnpm release:desktop against a check draft (check-v<version>) that holds only the
 # files under test. It installs the build as a user would and starts it once with --self-test.
 name: Release check
+# The release script finds its run by this title: a run started at the same time for another tag is
+# not its own.
+run-name: ${{ inputs.tag }}
 on:
   workflow_dispatch:
     inputs:
@@ -89,6 +92,26 @@ jobs:
           if (-not (Test-Path $report)) { Write-Error "the self-test wrote no report (exit code $($p.ExitCode))"; exit 1 }
           Get-Content $report
           if ($p.ExitCode -ne 0) { Write-Error "the self-test failed (exit code $($p.ExitCode))"; exit 1 }
+          # A zero exit is not enough: the report itself must say ok, with every step passed.
+          @'
+          const { readFileSync } = require("node:fs")
+          let report
+          try {
+            report = JSON.parse(readFileSync(process.argv[2], "utf8"))
+          } catch {
+            console.error("the self-test report is not readable JSON")
+            process.exit(1)
+          }
+          const steps = Array.isArray(report?.steps) ? report.steps : []
+          const failed = steps.find((step) => step?.ok !== true)
+          if (report?.ok !== true || steps.length === 0 || failed) {
+            console.error(failed ? `step ${failed.name} failed: ${failed.error ?? "no error given"}` : "the report says it failed")
+            process.exit(1)
+          }
+          console.log(`${report.version} ${report.platform}-${report.arch}: ${steps.map((s) => `${s.name} ${s.ms} ms`).join(", ")}`)
+          '@ | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\report-check.cjs"
+          node "$env:RUNNER_TEMP\report-check.cjs" $report
+          if ($LASTEXITCODE -ne 0) { Write-Error "the self-test report says it failed"; exit 1 }
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v4
