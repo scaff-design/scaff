@@ -1,21 +1,23 @@
 # Scaff
 
-A macOS app for designers. Download a release, move it to Applications, and start working.
+A Mac and Windows app for designers. Download a release and start working.
 
 This repository hosts **installers only**. Source is not published here.
 
 ## Download
 
-Get the latest DMG from [Releases](https://github.com/scaff-design/scaff/releases/latest).
+Get the latest installer from [Releases](https://github.com/scaff-design/scaff/releases/latest).
 
-| Your Mac | File |
-|----------|------|
-| Apple Silicon (M1, M2, M3, M4, …) | `Scaff-…-mac-arm64.dmg` |
-| Intel | `Scaff-…-mac-x64.dmg` |
+| Your computer | File |
+| --- | --- |
+| Mac, Apple silicon (M1, M2, M3, M4, …) | `Scaff-…-mac-arm64.dmg` |
+| Windows, 64-bit | `Scaff-…-win-x64.exe` |
 
-Apple menu → **About This Mac** shows the chip. The wrong DMG will not run.
+Apple menu → **About This Mac** shows the chip. Current releases are Apple silicon and 64-bit Windows.
 
 ## Install
+
+### Mac
 
 1. Open the DMG.
 2. Drag **Scaff** into **Applications**.
@@ -26,25 +28,35 @@ Apple menu → **About This Mac** shows the chip. The wrong DMG will not run.
 mv ~/Downloads/Scaff.app /Applications/
 ```
 
-### First launch (unsigned builds)
+The first time you open it, macOS asks you to confirm an app downloaded from the internet. Current Mac releases are signed and notarized, so that confirmation is enough.
 
-Current releases are **unsigned**. After AirDrop, Messages, email, or a browser download, macOS quarantines the app and blocks it. On Sequoia and Tahoe, Control-click → Open no longer bypasses that.
-
-In Terminal:
+If macOS says Scaff is damaged, clear the download quarantine once and open it again:
 
 ```sh
-xattr -cr "/Applications/Scaff.app"
+xattr -dr com.apple.quarantine "/Applications/Scaff.app"
 open "/Applications/Scaff.app"
 ```
 
+### Windows
+
+1. Run `Scaff-…-win-x64.exe`.
+2. If SmartScreen says **Windows protected your PC**, click **More info**, then **Run anyway**.
+3. Finish the installer. It installs for your account, and you can choose the folder.
+
 ## After it opens
 
-1. Pick a workspace folder if the welcome dialog asks.
-2. Open **Settings → Models** and paste an API key.
+1. Pick a project folder if the welcome dialog asks, or start fresh and add one later.
+2. Open **Settings → Models**. Sign in with Claude, ChatGPT, Grok, Cursor, or Copilot, paste an API key, or connect Ollama on this computer.
 3. Start a session.
 
-Keys stay on this Mac.
+Keys and sign-ins stay on this computer.
 
 ## Updates
 
-**Settings → Check for updates** looks at this repository’s latest release. Anyone can download; only maintainers can publish new versions.
+Scaff checks this repository’s latest release on its own, and **Settings → Check for updates** checks now. Mac and Windows builds download the update and install it when you restart. Projects and settings stay in place.
+
+Anyone can download. Only maintainers can publish new versions.
+
+## If Scaff can't start
+
+When some of Scaff’s files are missing, it opens a repair window, looks for a newer release, and installs that over this copy. Projects and settings stay. You can also download the installer again and install it over the app you already have.
