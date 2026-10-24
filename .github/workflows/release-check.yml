@@ -17,6 +17,9 @@ jobs:
     if: inputs.platform == 'win'
     runs-on: windows-latest
     timeout-minutes: 20
+    # A read-only token cannot see draft releases ("release not found"), and the check draft is one.
+    permissions:
+      contents: write
     # The token reaches only the download step: not npm, and not the app under test.
     env:
       TAG: ${{ inputs.tag }}
