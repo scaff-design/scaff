@@ -1,0 +1,92 @@
+# Source of truth for .github/workflows/release-check.yml on scaff-design/scaff (public).
+# Push changes with: pnpm release:check-workflow --push. pnpm release:desktop refuses to publish
+# Windows files while the public copy differs.
+#
+# Started by pnpm release:desktop against a check draft (check-v<version>) that holds only the
+# files under test. It installs the build as a user would and starts it once with --self-test.
+name: Release check
+on:
+  workflow_dispatch:
+    inputs:
+      tag: { description: "Check draft tag, check-v<version>", required: true, type: string }
+      platform: { description: "Platform to check", required: true, type: choice, options: [win] }
+permissions:
+  contents: read
+jobs:
+  win:
+    if: inputs.platform == 'win'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    # The token reaches only the download step: not npm, and not the app under test.
+    env:
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Download the installer and its feed
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --pattern 'Scaff-*-win-x64.exe' --pattern latest.yml --dir in
+      - name: Check the feed names this installer
+        shell: pwsh
+        run: |
+          # The feed is YAML (electron-builder's) or JSON (with a rollout share); js-yaml reads both,
+          # as electron-updater does.
+          $tools = "$env:RUNNER_TEMP\feed-check"
+          npm install --silent --ignore-scripts --no-save --no-package-lock --prefix $tools js-yaml@4.1.0
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          @'
+          const { createHash } = require("node:crypto")
+          const { readFileSync } = require("node:fs")
+          const { basename, join } = require("node:path")
+          const { load } = require(join(process.env.RUNNER_TEMP, "feed-check", "node_modules", "js-yaml"))
+          const [exe, feedPath] = process.argv.slice(2)
+          const feed = load(readFileSync(feedPath, "utf8"))
+          const body = readFileSync(exe)
+          const name = basename(exe)
+          const sha512 = createHash("sha512").update(body).digest("base64")
+          const problems = []
+          if (feed?.path !== name) problems.push(`path is ${feed?.path}, the installer is ${name}`)
+          if (feed?.sha512 !== sha512) problems.push("sha512 is not the installer's")
+          const files = Array.isArray(feed?.files) ? feed.files : []
+          const entry = files.find((file) => file?.url === name)
+          if (!entry) problems.push(`files does not name ${name}`)
+          else {
+            if (Number(entry.size) !== body.length) problems.push(`size is ${entry.size}, the installer is ${body.length}`)
+            if (entry.sha512 !== sha512) problems.push(`files sha512 for ${name} is not the installer's`)
+          }
+          for (const file of files) if (file?.url !== name) problems.push(`names ${file?.url}, which is not on the draft`)
+          for (const problem of problems) console.error(`latest.yml: ${problem}`)
+          if (problems.length > 0) process.exit(1)
+          console.log(`latest.yml names ${name}: ${body.length} bytes, sha512 ${sha512}`)
+          '@ | Set-Content -Encoding utf8 "$tools\check.cjs"
+          $exe = (Get-ChildItem in/Scaff-*-win-x64.exe).FullName
+          node "$tools\check.cjs" $exe in/latest.yml
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Install it as a user would, silently
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem in/Scaff-*-win-x64.exe).FullName
+          # /D= must be the last argument, unquoted.
+          $p = Start-Process $exe -ArgumentList '/S','/currentuser',"/D=$env:RUNNER_TEMP\Scaff" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "the installer exited with $($p.ExitCode)"; exit 1 }
+          if (-not (Test-Path "$env:RUNNER_TEMP\Scaff\Scaff.exe")) { Write-Error "the installer left no Scaff.exe"; exit 1 }
+      - name: Start it once
+        shell: pwsh
+        run: |
+          $report = "$env:RUNNER_TEMP\report.json"
+          $p = Start-Process "$env:RUNNER_TEMP\Scaff\Scaff.exe" -ArgumentList "--self-test=$report" -PassThru
+          # Reading the handle now keeps ExitCode readable after the process exits.
+          $null = $p.Handle
+          # The self-test stops itself within about 190 s.
+          if (-not $p.WaitForExit(240000)) {
+            Stop-Process -Id $p.Id -Force
+            Write-Error "the self-test did not finish within 240 s"
+            exit 1
+          }
+          if (-not (Test-Path $report)) { Write-Error "the self-test wrote no report (exit code $($p.ExitCode))"; exit 1 }
+          Get-Content $report
+          if ($p.ExitCode -ne 0) { Write-Error "the self-test failed (exit code $($p.ExitCode))"; exit 1 }
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: self-test-win, path: "${{ runner.temp }}/report.json", if-no-files-found: warn }
