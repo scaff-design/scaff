@@ -3,7 +3,8 @@
 # Windows files while the public copy differs.
 #
 # Started by pnpm release:desktop against a check draft (check-v<version>) that holds only the
-# files under test. It installs the build as a user would and starts it once with --self-test.
+# files under test. It installs the build as a user would and starts it once with --self-test,
+# then once with --remote-debugging-port, which a release build must refuse.
 name: Release check
 # The release script finds its run by this title: a run started at the same time for another tag is
 # not its own.
@@ -112,6 +113,45 @@ jobs:
           '@ | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\report-check.cjs"
           node "$env:RUNNER_TEMP\report-check.cjs" $report
           if ($LASTEXITCODE -ne 0) { Write-Error "the self-test report says it failed"; exit 1 }
+      - name: Refuses debugging switches
+        shell: pwsh
+        run: |
+          # A release build ends before Chromium opens a DevTools endpoint (src/main/launch-switches.ts),
+          # with two dashes or the single dash Chromium also parses, as release-self-test.sh tries on the Mac.
+          $tries = 0
+          foreach ($flag in "--remote-debugging-port", "-remote-debugging-port") {
+            $tries++
+            $free = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+            $free.Start(); $port = $free.LocalEndpoint.Port; $free.Stop()
+            $guardProfile = "$env:RUNNER_TEMP\guard-profile-$tries"
+            $guardReport = "$env:RUNNER_TEMP\guard-report-$tries.json"
+            New-Item -ItemType Directory -Force -Path $guardProfile | Out-Null
+            # With --self-test too, a build that does not refuse runs headless in a throwaway home and ends on its own.
+            $p = Start-Process "$env:RUNNER_TEMP\Scaff\Scaff.exe" -ArgumentList "--self-test=$guardReport","$flag=$port","--user-data-dir=$guardProfile" -PassThru
+            $null = $p.Handle
+            # Poll from the moment of launch until it exits: the port must refuse every time.
+            $listened = $false
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+              $client = [System.Net.Sockets.TcpClient]::new()
+              try { if ($client.ConnectAsync("127.0.0.1", $port).Wait(250)) { $listened = $true } } catch {} finally { $client.Dispose() }
+              Start-Sleep -Milliseconds 50
+            } while (-not $p.HasExited -and [DateTime]::UtcNow -lt $deadline)
+            $problems = @()
+            if (-not $p.HasExited) {
+              Stop-Process -Id $p.Id -Force
+              $problems += "it was still running after 20 s"
+            } elseif ($p.ExitCode -eq 0) {
+              $problems += "it exited 0"
+            }
+            if ($listened) { $problems += "port $port accepted a connection" }
+            if (Get-ChildItem -Path $guardProfile -Recurse -Filter DevToolsActivePort -ErrorAction SilentlyContinue) {
+              $problems += "it wrote DevToolsActivePort"
+            }
+            if (Test-Path $guardReport) { $problems += "it ran its self-test" }
+            if ($problems.Count -gt 0) { Write-Error "the guard did not refuse ${flag}: $($problems -join '; ')"; exit 1 }
+            Write-Output "refused $flag (exit code $($p.ExitCode), the port never answered, no DevToolsActivePort)"
+          }
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@v4
